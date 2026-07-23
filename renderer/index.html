@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
+  <title>CloudConnect</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Toolbar -->
+    <header class="toolbar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">Cloud<strong>Connect</strong></span>
+      </div>
+      <div class="toolbar-actions">
+        <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">▶ Run</button>
+        <button id="btn-cancel" class="btn btn-ghost" title="Cancel (Ctrl/Cmd+.)" disabled>■ Stop</button>
+        <span class="divider"></span>
+        <button id="btn-format" class="btn btn-ghost" title="Format SQL (Ctrl/Cmd+Shift+F)">⌘ Format SQL</button>
+        <button id="btn-new-tab" class="btn btn-ghost" title="New tab (Ctrl/Cmd+T)">＋ New</button>
+        <span class="divider"></span>
+        <label class="inline-field">
+          Max Rows
+          <input id="max-rows" type="number" min="1" max="1000000" value="100" />
+        </label>
+        <label class="inline-field checkbox">
+          <input id="run-background" type="checkbox" /> Run in Background
+        </label>
+      </div>
+      <div class="toolbar-right">
+        <label class="conn-picker">
+          Connected to
+          <select id="connection-select"><option value="">— none —</option></select>
+        </label>
+        <button id="btn-connections" class="btn btn-ghost" title="Manage connections">⚙</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- DB Browser -->
+      <aside id="db-browser" class="db-browser">
+        <div class="panel-head">
+          <span>DB Browser</span>
+          <button id="btn-refresh-tree" class="icon-btn" title="Refresh">⟳</button>
+        </div>
+        <div class="tree-search">
+          <input id="tree-filter" type="search" placeholder="Filter tables & columns…" />
+        </div>
+        <div id="tree" class="tree"><div class="tree-empty">Connect to browse schema.</div></div>
+      </aside>
+
+      <div class="splitter" data-target="db-browser"></div>
+
+      <!-- Editor + results -->
+      <section class="workspace">
+        <div class="tabs" id="editor-tabs"></div>
+        <div class="editor-area">
+          <div id="monaco" class="monaco"></div>
+          <div id="fallback-editor" class="fallback-editor" hidden>
+            <textarea id="fallback-textarea" spellcheck="false"
+                      placeholder="-- Monaco unavailable; using plain editor&#10;SELECT * FROM FUSION.PER_ALL_PEOPLE_F"></textarea>
+          </div>
+        </div>
+
+        <div class="hsplitter"></div>
+
+        <div class="results">
+          <div class="results-head">
+            <div class="result-tabs" id="result-tabs"></div>
+            <div class="results-actions">
+              <input id="grid-search" type="search" placeholder="Search results…" />
+              <button id="btn-export-csv" class="btn btn-ghost">Export CSV</button>
+              <button id="btn-export-xlsx" class="btn btn-ghost">Export Excel</button>
+            </div>
+          </div>
+          <div id="grid" class="grid"></div>
+          <div class="status-bar">
+            <span id="status-msg">Ready.</span>
+            <span id="status-right"></span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Jobs tray -->
+    <div id="jobs-tray" class="jobs-tray"></div>
+  </div>
+
+  <!-- Connection manager modal -->
+  <div id="modal-backdrop" class="modal-backdrop" hidden>
+    <div class="modal" id="modal"></div>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toasts" class="toasts"></div>
+
+  <script src="formatter.js"></script>
+  <script src="grid.js"></script>
+  <script src="app.js"></script>
+  <script src="vendor/monaco/vs/loader.js" onerror="window.__monacoMissing=true"></script>
+  <script>
+    (function () {
+      if (window.__monacoMissing || typeof require === 'undefined') {
+        window.CloudConnect && window.CloudConnect.initEditor(null);
+        return;
+      }
+      require.config({ paths: { vs: 'vendor/monaco/vs' } });
+      require(['vs/editor/editor.main'], function () {
+        window.CloudConnect.initEditor(window.monaco);
+      }, function () {
+        window.CloudConnect.initEditor(null);
+      });
+    })();
+  </script>
+</body>
+</html>

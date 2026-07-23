@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dataModel xmlns="http://xmlns.oracle.com/oxp/xmlp/" version="2.0"
+           xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+           defaultDataSourceRef="ApplicationDB_FSCM">
+  <description><![CDATA[CloudConnect generic SQL runner. Executes the SQL passed in the p_sql parameter.]]></description>
+  <dataProperties>
+    <property name="include_parameters" value="true"/>
+    <property name="include_null_Element" value="true"/>
+    <property name="include_rowsettag" value="false"/>
+    <property name="sql_monitor_report" value="false"/>
+    <property name="db_fetch_size" value="500"/>
+    <property name="scalable_mode" value="on"/>
+  </dataProperties>
+  <parameters>
+    <parameter name="p_sql" dataType="xsd:string" rowPlacement="1"
+               defaultValue="select 1 as col1 from dual">
+      <input label="SQL"/>
+    </parameter>
+  </parameters>
+  <dataSets>
+    <dataSet name="Q_MAIN" type="simple">
+      <sql dataSourceRef="ApplicationDB_FSCM" xmlRowTagName="G_1" nsQuery="false"
+           fetchSize="500"><![CDATA[&p_sql]]></sql>
+    </dataSet>
+  </dataSets>
+  <output rootName="DATA_DS" uniqueRowName="false">
+    <nodeList name="dataStructure">
+      <dataStructure tagName="DATA_DS">
+        <group name="G_1" label="G_1" source="Q_MAIN"/>
+      </dataStructure>
+    </nodeList>
+  </output>
+  <eventTriggers/>
+  <lexicals/>
+  <valueSets/>
+</dataModel>

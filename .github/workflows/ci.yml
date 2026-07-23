@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    env:
+      # The Electron runtime binary is not needed to lint or run the unit
+      # tests, and skipping it keeps CI fast and avoids a large download.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (syntax check)
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test

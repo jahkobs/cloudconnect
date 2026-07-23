@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report xmlns="http://xmlns.oracle.com/oxp/xmlp/" version="2.0"
+        defaultTemplateType="csv" showControls="true"
+        onLine="true" openLinkInNewWindow="true"
+        controllableFormats="true">
+  <description><![CDATA[CloudConnect SQL Runner report. Returns dataset as CSV.]]></description>
+  <dataModel url="/Custom/CloudConnect/SQLRunner.xdm"/>
+  <parameters/>
+  <listOfTemplates default="CSV">
+    <template templateType="csv" defaultOutputFormat="csv" viewable="true"
+              label="CSV" locale="en_US" outputName="CSV" type="csv"
+              active="true" applyStyleTemplate="false" default="true">
+      <outputFormats>
+        <outputFormat outputName="csv" default="true"/>
+      </outputFormats>
+    </template>
+  </listOfTemplates>
+  <properties/>
+</report>
