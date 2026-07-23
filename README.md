@@ -6,7 +6,7 @@ foreground or background, and export results to CSV or Excel — all from a nati
 desktop app.
 
 CloudConnect is modeled on the SplashBI *SQL Connect* feature set and built with
-Electron + the Monaco editor.
+Electron.
 
 <p align="center"><img src="renderer/assets/icon.svg" width="128" alt="CloudConnect"></p>
 
@@ -28,8 +28,8 @@ and deployment details.
 | Feature | Notes |
 | --- | --- |
 | **Oracle Fusion connectivity** | BI Publisher REST (v2 with v1 fallback) for query execution; SOAP `CatalogService` for one-click report deployment. |
-| **SQL editor** | Monaco-powered: syntax highlighting, minimap, multi-cursor, find/replace. Falls back to a plain editor if Monaco isn't present. |
-| **IntelliSense** | Keyword completion plus schema-aware table/column completion sourced from the DB Browser. |
+| **SQL editor** | Native, dependency-free editor with a line-number gutter, tab-key indent, and keyboard run/format. Renders reliably in the packaged app on every platform. |
+| **Connection status** | Toolbar indicator + progress bar showing connecting / connected / reachable / not-connected, with one-click re-test. |
 | **Format SQL** | One-click pretty-printer that respects strings, comments, and quoted identifiers. |
 | **DB Browser** | Searchable schema tree (owners → tables/views → columns) read from the Oracle data dictionary. Double-click a table to preview. |
 | **Results grid** | Virtualized "pageless" scrolling for large result sets, in-grid search/filter, serial column, text selection & copy. |
@@ -43,7 +43,7 @@ and deployment details.
 ## Getting started
 
 ```bash
-npm install      # installs deps and vendors Monaco into renderer/vendor/monaco
+npm install      # installs dependencies
 npm start        # launch the desktop app
 npm run dev      # launch with DevTools open
 ```

@@ -115,6 +115,68 @@ html, body {
   min-width: 160px;
 }
 
+/* ---- connection status indicator + progress bar ---- */
+.conn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: var(--bg-2);
+  font-size: 12px;
+  min-width: 168px;
+  position: relative;
+  overflow: hidden;
+}
+.conn-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-faint);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.03);
+}
+.conn-status-text { color: var(--text-dim); white-space: nowrap; }
+/* progress bar sits along the bottom edge of the chip */
+.conn-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: transparent;
+  overflow: hidden;
+}
+.conn-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.3s ease; }
+
+/* state colours */
+.conn-status.state-idle .conn-dot { background: var(--text-faint); }
+.conn-status.state-connecting .conn-dot { background: var(--warn); animation: pulse 1s infinite; }
+.conn-status.state-connecting .conn-progress-bar {
+  width: 40%;
+  background: var(--warn);
+  animation: indeterminate 1.1s infinite ease-in-out;
+}
+.conn-status.state-connected { border-color: var(--run); }
+.conn-status.state-connected .conn-dot { background: var(--run); box-shadow: 0 0 0 3px rgba(34, 160, 107, 0.18); }
+.conn-status.state-connected .conn-status-text { color: #8fe3bc; }
+.conn-status.state-connected .conn-progress-bar { width: 100%; background: var(--run); }
+.conn-status.state-warn { border-color: var(--warn); }
+.conn-status.state-warn .conn-dot { background: var(--warn); }
+.conn-status.state-warn .conn-status-text { color: #f0c987; }
+.conn-status.state-warn .conn-progress-bar { width: 100%; background: var(--warn); }
+.conn-status.state-error { border-color: var(--danger); }
+.conn-status.state-error .conn-dot { background: var(--danger); }
+.conn-status.state-error .conn-status-text { color: #ff9a9d; }
+.conn-status.state-error .conn-progress-bar { width: 100%; background: var(--danger); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes indeterminate {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
 /* ------------------------------------------------------------------- main */
 .main { flex: 1 1 auto; display: flex; min-height: 0; }
 
@@ -234,10 +296,25 @@ html, body {
 .tab-close:hover { color: #ff8a8d; }
 .tab-add { color: var(--text-faint); font-size: 15px; }
 
-.editor-area { flex: 1 1 auto; position: relative; min-height: 100px; }
-.monaco { position: absolute; inset: 0; }
-.fallback-editor { position: absolute; inset: 0; }
-.fallback-editor textarea {
+.editor-area { flex: 1 1 auto; position: relative; min-height: 120px; }
+.code-editor { position: absolute; inset: 0; display: flex; background: var(--bg); }
+.gutter {
+  flex: 0 0 auto;
+  min-width: 48px;
+  padding: 12px 8px 12px 0;
+  text-align: right;
+  background: var(--panel);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+  overflow: hidden;
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+.gutter .gln { height: 20px; }
+.sql-input {
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
   border: none;
@@ -246,10 +323,16 @@ html, body {
   color: var(--text);
   font-family: var(--mono);
   font-size: 13px;
+  line-height: 20px;
   padding: 12px;
   outline: none;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
   user-select: text;
+  caret-color: var(--accent);
 }
+.sql-input::placeholder { color: var(--text-faint); }
 
 /* ---------------------------------------------------------------- results */
 .results {

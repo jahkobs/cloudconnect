@@ -1,9 +1,6 @@
 # Dependencies
 node_modules/
 
-# Vendored Monaco is regenerated from node_modules by scripts/fetch-monaco.js
-renderer/vendor/monaco/
-
 # Build output
 release/
 dist/

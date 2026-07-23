@@ -31,9 +31,8 @@ SELECT person_number,
  FETCH FIRST 100 ROWS ONLY`;
 
   const state = {
-    monaco: null,
-    editor: null,
-    usingFallback: false,
+    ta: null, // the SQL <textarea> element
+    gutter: null, // line-number gutter element
     connections: [],
     connectionId: '',
     tabs: [],
@@ -43,6 +42,7 @@ SELECT person_number,
     settings: { maxRows: 100 },
     encryptionAvailable: false,
     tabSeq: 0,
+    schemaCompletions: [],
   };
 
   // ---------------------------------------------------------------- toasts
@@ -67,30 +67,38 @@ SELECT person_number,
   }
 
   function getSql() {
-    const tab = activeTab();
-    if (!tab) return '';
-    if (state.usingFallback) return $('#fallback-textarea').value;
-    return tab.model ? tab.model.getValue() : tab.sql;
+    return state.ta ? state.ta.value : '';
   }
 
   function getSelectedOrAllSql() {
-    if (!state.usingFallback && state.editor) {
-      const sel = state.editor.getSelection();
-      const model = state.editor.getModel();
-      if (sel && model && !sel.isEmpty()) {
-        const text = model.getValueInRange(sel);
-        if (text.trim()) return text;
-      }
+    const ta = state.ta;
+    if (ta && ta.selectionEnd > ta.selectionStart) {
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      if (sel.trim()) return sel;
     }
     return getSql();
   }
 
+  function setEditorValue(v) {
+    if (!state.ta) return;
+    state.ta.value = v == null ? '' : v;
+    updateGutter();
+  }
+
+  function updateGutter() {
+    if (!state.gutter || !state.ta) return;
+    const lines = state.ta.value.split('\n').length || 1;
+    if (state.gutter.childElementCount !== lines) {
+      let html = '';
+      for (let i = 1; i <= lines; i++) html += `<div class="gln">${i}</div>`;
+      state.gutter.innerHTML = html;
+    }
+    state.gutter.scrollTop = state.ta.scrollTop;
+  }
+
   function newTab(name, sql) {
     const id = `tab_${++state.tabSeq}`;
-    const tab = { id, name: name || `Query ${state.tabSeq}`, sql: sql != null ? sql : '', model: null, jobId: null };
-    if (state.monaco) {
-      tab.model = state.monaco.editor.createModel(tab.sql, 'sql');
-    }
+    const tab = { id, name: name || `Query ${state.tabSeq}`, sql: sql != null ? sql : '', jobId: null };
     state.tabs.push(tab);
     switchTab(id);
     renderTabs();
@@ -100,27 +108,26 @@ SELECT person_number,
   function closeTab(id) {
     const idx = state.tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
-    const [removed] = state.tabs.splice(idx, 1);
-    if (removed.model) removed.model.dispose();
-    if (state.tabs.length === 0) newTab('Query', SAMPLE_SQL);
-    else if (state.activeTabId === id) switchTab(state.tabs[Math.max(0, idx - 1)].id);
-    renderTabs();
+    const cur = activeTab();
+    if (cur) cur.sql = getSql();
+    state.tabs.splice(idx, 1);
+    if (state.tabs.length === 0) {
+      newTab('Query', SAMPLE_SQL);
+      return;
+    }
+    if (state.activeTabId === id) switchTab(state.tabs[Math.max(0, idx - 1)].id);
+    else renderTabs();
   }
 
   function switchTab(id) {
-    // persist current
+    // persist the current tab's text before switching
     const cur = activeTab();
-    if (cur && !state.usingFallback && cur.model) cur.sql = cur.model.getValue();
+    if (cur && cur.id !== id) cur.sql = getSql();
     state.activeTabId = id;
     const tab = activeTab();
     if (!tab) return;
-    if (state.usingFallback) {
-      $('#fallback-textarea').value = tab.sql;
-    } else if (state.editor) {
-      if (!tab.model) tab.model = state.monaco.editor.createModel(tab.sql, 'sql');
-      state.editor.setModel(tab.model);
-      state.editor.focus();
-    }
+    setEditorValue(tab.sql);
+    if (state.ta) state.ta.focus();
     renderTabs();
   }
 
@@ -146,122 +153,52 @@ SELECT person_number,
     bar.appendChild(add);
   }
 
-  // ------------------------------------------------------------- Monaco init
-  function initEditor(monaco) {
-    // Guard: the loader's timeout fallback and Monaco's own callback can both
-    // fire — only the first call wins.
+  // --------------------------------------------------------- editor (textarea)
+  // A native <textarea> with a line-number gutter. No heavyweight editor
+  // dependency, so it renders reliably in the packaged Electron/asar app on
+  // every platform — this replaced an embedded editor that failed to mount
+  // inside the asar bundle on Windows.
+  function initEditor() {
     if (state._editorInitialized) return;
     state._editorInitialized = true;
 
-    if (monaco) {
-      try {
-        state.monaco = monaco;
-        configureSqlLanguage(monaco);
-        state.editor = monaco.editor.create($('#monaco'), {
-          value: '',
-          language: 'sql',
-          theme: 'cc-dark',
-          automaticLayout: true,
-          minimap: { enabled: true },
-          fontSize: 13,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          scrollBeyondLastLine: false,
-          renderLineHighlight: 'all',
-          smoothScrolling: true,
-          tabSize: 2,
-        });
-        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runQuery(false));
-        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => runQuery(true));
-        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, formatSql);
-      } catch (err) {
-        // Monaco loaded but failed to instantiate — degrade gracefully.
-        console.error('Monaco init failed, falling back to plain editor:', err);
-        state.monaco = null;
-        state.editor = null;
-        state.usingFallback = true;
+    const ta = $('#sql-input');
+    state.ta = ta;
+    state.gutter = $('#gutter');
+
+    ta.addEventListener('keydown', (e) => {
+      const meta = e.ctrlKey || e.metaKey;
+      if (e.key === 'Tab') {
+        // Insert two spaces instead of moving focus.
+        e.preventDefault();
+        const s = ta.selectionStart;
+        const en = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 2;
+        updateGutter();
+      } else if (meta && e.key === 'Enter') {
+        e.preventDefault();
+        runQuery(e.shiftKey); // Shift = background
+      } else if (meta && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        formatSql();
       }
-    } else {
-      state.usingFallback = true;
-    }
+    });
+    ta.addEventListener('input', updateGutter);
+    ta.addEventListener('scroll', () => {
+      if (state.gutter) state.gutter.scrollTop = ta.scrollTop;
+    });
 
-    if (state.usingFallback) {
-      const mon = $('#monaco');
-      const fb = $('#fallback-editor');
-      if (mon) mon.hidden = true;
-      if (fb) fb.hidden = false;
-      toast('Rich editor unavailable — using the plain SQL editor.', 'warn', 5000);
-    }
-
-    // First tab (always create it, whichever editor is active).
+    // First tab.
     newTab('Query 1', SAMPLE_SQL);
-    if (state.usingFallback) $('#fallback-textarea').value = SAMPLE_SQL;
-  }
-
-  function configureSqlLanguage(monaco) {
-    monaco.editor.defineTheme('cc-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        { token: 'keyword.sql', foreground: '6fb3ff', fontStyle: 'bold' },
-        { token: 'string.sql', foreground: 'b5e8a0' },
-        { token: 'comment.sql', foreground: '6b7a99', fontStyle: 'italic' },
-        { token: 'number.sql', foreground: 'f0b37e' },
-      ],
-      colors: {
-        'editor.background': '#0f1729',
-        'editor.lineHighlightBackground': '#16203a',
-        'editorLineNumber.foreground': '#3d4a68',
-        'editorGutter.background': '#0f1729',
-      },
-    });
-
-    // Schema-aware + keyword completions.
-    monaco.languages.registerCompletionItemProvider('sql', {
-      triggerCharacters: [' ', '.', '\n'],
-      provideCompletionItems: (model, position) => {
-        const word = model.getWordUntilPosition(position);
-        const range = {
-          startLineNumber: position.lineNumber,
-          endLineNumber: position.lineNumber,
-          startColumn: word.startColumn,
-          endColumn: word.endColumn,
-        };
-        const suggestions = [];
-        const kw = (
-          'SELECT FROM WHERE GROUP BY HAVING ORDER BY JOIN LEFT JOIN RIGHT JOIN INNER JOIN ' +
-          'ON AND OR NOT IN IS NULL LIKE BETWEEN EXISTS DISTINCT COUNT SUM AVG MIN MAX ' +
-          'CASE WHEN THEN ELSE END AS UNION ALL FETCH FIRST ROWS ONLY WITH'
-        ).split(' ');
-        for (const k of kw) {
-          suggestions.push({
-            label: k,
-            kind: monaco.languages.CompletionItemKind.Keyword,
-            insertText: k,
-            range,
-          });
-        }
-        for (const item of state.schemaCompletions || []) {
-          suggestions.push({ ...item, range });
-        }
-        return { suggestions };
-      },
-    });
   }
 
   function formatSql() {
-    if (!window.SqlFormatter) return;
-    const tab = activeTab();
-    const src = getSql();
-    const formatted = window.SqlFormatter.format(src);
-    if (state.usingFallback) {
-      $('#fallback-textarea').value = formatted;
-    } else if (tab && tab.model) {
-      tab.model.pushEditOperations(
-        [],
-        [{ range: tab.model.getFullModelRange(), text: formatted }],
-        () => null
-      );
-    }
+    if (!window.SqlFormatter || !state.ta) return;
+    const formatted = window.SqlFormatter.format(getSql());
+    setEditorValue(formatted);
+    const cur = activeTab();
+    if (cur) cur.sql = formatted;
     setStatus('Formatted SQL.');
   }
 
@@ -502,16 +439,43 @@ SELECT person_number,
   }
 
   function updateSchemaCompletions(byOwner) {
-    if (!state.monaco) return;
     const items = [];
-    const kind = state.monaco.languages.CompletionItemKind;
     for (const [owner, tables] of byOwner) {
-      for (const table of tables) {
-        items.push({ label: table, kind: kind.Struct, insertText: table, detail: owner });
-        items.push({ label: `${owner}.${table}`, kind: kind.Struct, insertText: `${owner}.${table}`, detail: 'schema.table' });
-      }
+      for (const table of tables) items.push(`${owner}.${table}`);
     }
     state.schemaCompletions = items;
+  }
+
+  // ------------------------------------------------------- connection status
+  // Drives the toolbar indicator + progress bar: idle / connecting / connected
+  // / warn (reachable but report not deployed) / error (not connected).
+  function setConnStatus(kind, text) {
+    const box = $('#conn-status');
+    if (!box) return;
+    box.className = `conn-status state-${kind}`;
+    $('#conn-status-text').textContent = text;
+  }
+
+  async function updateConnStatus() {
+    if (!state.connectionId) {
+      setConnStatus('idle', 'Not connected');
+      return;
+    }
+    const conn = state.connections.find((c) => c.id === state.connectionId);
+    const name = conn ? conn.name : '';
+    setConnStatus('connecting', `Connecting…${name ? ' ' + name : ''}`);
+    try {
+      const r = await cc.connections.test(state.connectionId);
+      if (r && r.ok) {
+        if (r.warning) setConnStatus('warn', 'Reachable · deploy SQL Runner');
+        else setConnStatus('connected', `Connected${r.version && r.version !== 'unknown' ? ' · ' + r.version : ''}`);
+      } else {
+        setConnStatus('error', 'Not connected');
+        if (r && r.error) toast(`Connection failed: ${r.error}`, 'error', 7000);
+      }
+    } catch (e) {
+      setConnStatus('error', 'Not connected');
+    }
   }
 
   // ------------------------------------------------------------- export
@@ -753,7 +717,13 @@ SELECT person_number,
     $('#connection-select').addEventListener('change', (e) => {
       state.connectionId = e.target.value;
       loadTree('');
+      updateConnStatus();
       setStatus(state.connectionId ? 'Connection selected.' : 'No connection selected.');
+    });
+
+    $('#btn-reconnect').addEventListener('click', () => {
+      if (!state.connectionId) return toast('Select a connection first.', 'warn');
+      updateConnStatus();
     });
 
     let treeTimer;
@@ -803,13 +773,10 @@ SELECT person_number,
       const b = $('#db-browser');
       b.classList.toggle('collapsed');
     });
-    cc.onMenu('menu:toggle-minimap', () => {
-      if (state.editor) {
-        const on = state.editor.getOption(state.monaco.editor.EditorOption.minimap).enabled;
-        state.editor.updateOptions({ minimap: { enabled: !on } });
-      }
+    cc.onMenu('menu:toggle-minimap', () => {});
+    cc.onMenu('menu:find', () => {
+      if (state.ta) state.ta.focus();
     });
-    cc.onMenu('menu:find', () => state.editor && state.editor.getAction('actions.find').run());
     cc.onMenu('menu:settings', openHistory); // settings surfaced via history/settings modal
     cc.onMenu('menu:about', () =>
       toast('CloudConnect — Oracle Fusion SQL client. Runs queries via BI Publisher.', 'info', 6000)
@@ -876,6 +843,7 @@ SELECT person_number,
   }
 
   async function boot() {
+    initEditor(); // always first — the editor must render no matter what follows
     wireUi();
     try {
       const info = await cc.app.info();
@@ -890,20 +858,23 @@ SELECT person_number,
     } catch {
       /* ignore */
     }
-    await refreshConnections();
+    try {
+      await refreshConnections();
+    } catch {
+      /* ignore — editor still usable */
+    }
     // Auto-select first connection, or offer demo.
     if (state.connections.length) {
       state.connectionId = state.connections[0].id;
       $('#connection-select').value = state.connectionId;
       loadTree('');
+      updateConnStatus();
     } else {
+      setConnStatus('idle', 'Not connected');
       setStatus('No connections yet. Open ⚙ to add one (or a demo connection).');
     }
   }
 
-  // Expose the editor initializer for the Monaco loader in index.html.
-  window.CloudConnect = { initEditor };
-
-  // Boot once the DOM is ready (scripts are at end of body, so it is).
+  // Boot immediately (scripts are at the end of <body>, so the DOM is ready).
   boot();
 })();

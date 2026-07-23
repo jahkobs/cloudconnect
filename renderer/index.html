@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
   <title>CloudConnect</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -31,10 +31,17 @@
         </label>
       </div>
       <div class="toolbar-right">
+        <!-- Connection status indicator + progress bar -->
+        <div id="conn-status" class="conn-status state-idle" title="Connection status">
+          <span class="conn-dot"></span>
+          <span id="conn-status-text" class="conn-status-text">Not connected</span>
+          <div class="conn-progress"><div id="conn-progress-bar" class="conn-progress-bar"></div></div>
+        </div>
         <label class="conn-picker">
-          Connected to
+          Connection
           <select id="connection-select"><option value="">— none —</option></select>
         </label>
+        <button id="btn-reconnect" class="btn btn-ghost" title="Test / reconnect">⟳</button>
         <button id="btn-connections" class="btn btn-ghost" title="Manage connections">⚙</button>
       </div>
     </header>
@@ -58,10 +65,11 @@
       <section class="workspace">
         <div class="tabs" id="editor-tabs"></div>
         <div class="editor-area">
-          <div id="monaco" class="monaco"></div>
-          <div id="fallback-editor" class="fallback-editor" hidden>
-            <textarea id="fallback-textarea" spellcheck="false"
-                      placeholder="-- Monaco unavailable; using plain editor&#10;SELECT * FROM FUSION.PER_ALL_PEOPLE_F"></textarea>
+          <div class="code-editor">
+            <div id="gutter" class="gutter" aria-hidden="true"></div>
+            <textarea id="sql-input" class="sql-input" spellcheck="false" wrap="off"
+                      autocomplete="off" autocorrect="off" autocapitalize="off"
+                      placeholder="-- Type SQL here and press Ctrl/Cmd+Enter to run&#10;SELECT * FROM FUSION.PER_ALL_PEOPLE_F FETCH FIRST 100 ROWS ONLY"></textarea>
           </div>
         </div>
 
@@ -97,12 +105,10 @@
   <!-- Toasts -->
   <div id="toasts" class="toasts"></div>
 
-  <!-- All scripts are external: the CSP forbids inline scripts and inline
-       event handlers, so bootstrap logic lives in editor-boot.js. -->
+  <!-- External scripts only (CSP forbids inline scripts). No heavyweight editor
+       dependency: the SQL editor is a native textarea, so it always renders. -->
   <script src="formatter.js"></script>
   <script src="grid.js"></script>
   <script src="app.js"></script>
-  <script src="vendor/monaco/vs/loader.js"></script>
-  <script src="editor-boot.js"></script>
 </body>
 </html>
