@@ -127,8 +127,51 @@ brokered through the preload bridge to the main process.
 ```bash
 npm test         # run the unit test suite (parser, formatter, fusion, demo)
 npm run lint     # syntax-check every source file
-npm run dist     # build installers with electron-builder
+npm run make-icon # regenerate build/icon.png from scratch
 ```
+
+## Packaging installers
+
+Installers are built with [electron-builder](https://www.electron.build/). Each
+installer can only be produced on (or for) its own platform — macOS `.dmg`
+packaging requires macOS, and Windows `.exe` (NSIS) packaging requires Windows
+or Wine — so the reliable, reproducible path is the **Release** GitHub Actions
+workflow, which builds each target on its native runner.
+
+### Via CI (recommended — produces Windows + macOS installers)
+
+Push a version tag, or run the **Release** workflow manually from the Actions tab:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+`.github/workflows/release.yml` then builds in parallel:
+
+| Runner | Artifacts |
+| --- | --- |
+| `macos-latest` | `CloudConnect-<ver>-mac-x64.dmg`, `-arm64.dmg` (+ `.zip`) |
+| `windows-latest` | `CloudConnect-<ver>-win-x64.exe` (NSIS installer + portable) |
+| `ubuntu-latest` | `CloudConnect-<ver>-linux-x86_64.AppImage`, `.deb` |
+
+Artifacts are uploaded to the workflow run; a tag build also attaches them to a
+GitHub Release. macOS builds are **unsigned** (no Apple Developer certificate in
+CI) — to ship signed/notarized builds, add `CSC_LINK`, `CSC_KEY_PASSWORD`, and
+notarization credentials as repository secrets.
+
+### Locally (current platform only)
+
+```bash
+npm run dist         # build for the current OS
+npm run dist:mac     # macOS only  (must run on macOS)
+npm run dist:win     # Windows only (Windows, or Linux/macOS with Wine)
+npm run dist:linux   # Linux only
+npm run pack         # unpacked app (no installer) for quick testing
+```
+
+Output lands in `release/`. The app icon is generated from `build/icon.png`
+(1024×1024); electron-builder converts it to `.icns` / `.ico` per platform.
 
 ## License
 
