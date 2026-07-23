@@ -1,0 +1,41 @@
+{
+  "name": "cloudconnect",
+  "version": "1.0.0",
+  "description": "CloudConnect — a desktop SQL client for running queries against Oracle Fusion Cloud Applications via BI Publisher.",
+  "author": "CloudConnect",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test test/*.test.js",
+    "lint": "node -c electron/main.js && node scripts/syntax-check.js",
+    "postinstall": "node scripts/fetch-monaco.js",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^4.5.0",
+    "jszip": "^3.10.1",
+    "monaco-editor": "^0.52.0"
+  },
+  "devDependencies": {
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.cloudconnect.app",
+    "productName": "CloudConnect",
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  }
+}
