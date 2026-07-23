@@ -1,123 +1,96 @@
 'use strict';
 
 /**
- * IPC surface between the renderer and main process. All network access to
- * Oracle Fusion and all disk I/O happen here in the main process; the renderer
- * only ever sees sanitized data through these channels.
+ * IPC surface for FusionQuery Studio (v2). Everything the renderer can do goes
+ * through here; all network/disk access and all governance (read-only
+ * enforcement, row limits, audit) happen in the main process via the Gateway.
  */
 
 const { ipcMain, dialog, Notification } = require('electron');
-const path = require('path');
-const { FusionClient, FusionError } = require('./fusion/client');
-const { runDemo } = require('./fusion/demo');
-const queries = require('./fusion/queries');
 const exporter = require('./export');
+const { detectBindParams } = require('./core/sql-validator');
+const { validateReadOnly } = require('./core/sql-validator');
+const { EVENTS } = require('./core/audit');
 
-// Track in-flight background jobs so they can be cancelled.
 const jobs = new Map();
 
-function clientFor(store, connectionId) {
-  const conn = store.getConnection(connectionId);
-  if (!conn) throw new FusionError('Connection not found.');
-  return { conn, client: conn.demo ? null : new FusionClient(conn) };
-}
-
-async function execute(store, connectionId, sql, maxRows, signal) {
-  const { conn, client } = clientFor(store, connectionId);
-  if (conn.demo) {
-    // Simulate a little latency so background/foreground UX is visible.
-    await new Promise((r) => setTimeout(r, 150));
-    if (signal && signal.aborted) throw new FusionError('Cancelled.');
-    return { ...runDemo(sql, maxRows), sql };
-  }
-  return client.runQuery(sql, { maxRows, signal });
-}
-
-function register(store, getWindow) {
+function register({ store, gateway, audit, ai }, getWindow) {
   const send = (channel, payload) => {
     const win = getWindow();
     if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
   };
 
-  // ---- Connections -------------------------------------------------------
+  const connName = (id) => {
+    const c = store.getConnection(id);
+    return c ? { name: c.name, environment: c.environment } : {};
+  };
+
+  // ---- app ---------------------------------------------------------------
+  ipcMain.handle('app:info', (_e) => ({
+    version: require('../package.json').version,
+    encryptionAvailable: store.encryptionAvailable(),
+    platform: process.platform,
+  }));
+
+  // ---- connections -------------------------------------------------------
   ipcMain.handle('connections:list', () => store.listConnections());
-  ipcMain.handle('connections:save', (_e, conn) => store.saveConnection(conn));
-  ipcMain.handle('connections:delete', (_e, id) => store.deleteConnection(id));
+  ipcMain.handle('connections:save', (_e, conn) => {
+    const res = store.saveConnection(conn);
+    audit.record(res.isNew ? EVENTS.CONNECTION_CREATE : EVENTS.CONNECTION_UPDATE, { type: res.connection.type }, {
+      connectionId: res.id, connectionName: res.connection.name, environment: res.connection.environment,
+    });
+    return res;
+  });
+  ipcMain.handle('connections:delete', (_e, id) => {
+    const meta = connName(id);
+    store.deleteConnection(id);
+    audit.record(EVENTS.CONNECTION_DELETE, {}, { connectionId: id, ...meta });
+    return { ok: true };
+  });
+  ipcMain.handle('connections:clone', (_e, id) => store.cloneConnection(id));
+  ipcMain.handle('connections:test', (_e, id) => gateway.test(id));
+  ipcMain.handle('connections:deploy', (_e, id) => gateway.deploy(id));
+  ipcMain.handle('connections:capabilities', (_e, id) => gateway.capabilities(id));
 
-  ipcMain.handle('connections:test', async (_e, connOrId) => {
-    try {
-      let conn = typeof connOrId === 'string' ? store.getConnection(connOrId) : connOrId;
-      if (!conn) return { ok: false, error: 'Connection not found.' };
-      if (conn.demo) return { ok: true, version: 'demo', pod: 'demo://synthetic-fusion' };
-      const info = await new FusionClient(conn).testConnection();
-      return info;
-    } catch (err) {
-      return { ok: false, error: err.message, status: err.status };
-    }
+  // ---- query -------------------------------------------------------------
+  ipcMain.handle('query:validate', (_e, sql) => {
+    const v = validateReadOnly(sql);
+    return { valid: v.valid, error: v.error, statementType: v.statementType, bindParams: detectBindParams(sql) };
   });
 
-  ipcMain.handle('connections:deploy', async (_e, connectionId) => {
-    try {
-      const conn = store.getConnection(connectionId);
-      if (!conn) return { ok: false, error: 'Connection not found.' };
-      if (conn.demo) return { ok: true, reportPath: conn.reportPath, demo: true };
-      const res = await new FusionClient(conn).deploySqlRunner();
-      return res;
-    } catch (err) {
-      return { ok: false, error: err.message, detail: err.detail };
-    }
+  ipcMain.handle('query:run', async (_e, { connectionId, sql, maxRows, binds }) => {
+    const res = await gateway.runQuery(connectionId, sql, { maxRows, binds });
+    const meta = connName(connectionId);
+    store.addHistory({
+      sql, connectionId, connectionName: meta.name, environment: meta.environment,
+      rowCount: res.ok ? res.result.rowCount : 0, elapsedMs: res.ok ? res.result.elapsedMs : 0,
+      ok: res.ok, error: res.ok ? null : res.error,
+    });
+    return res;
   });
 
-  // ---- Query execution (foreground) --------------------------------------
-  ipcMain.handle('query:run', async (_e, { connectionId, sql, maxRows }) => {
-    try {
-      const result = await execute(store, connectionId, sql, maxRows);
-      const conn = store.getConnection(connectionId);
-      store.addHistory({
-        sql,
-        connectionId,
-        connectionName: conn && conn.name,
-        rowCount: result.rowCount,
-        elapsedMs: result.elapsedMs,
-        ok: true,
-      });
-      return { ok: true, result };
-    } catch (err) {
-      store.addHistory({ sql, connectionId, ok: false, error: err.message });
-      return { ok: false, error: err.message, detail: err.detail, status: err.status };
-    }
-  });
-
-  // ---- Query execution (background) --------------------------------------
-  ipcMain.handle('query:runBackground', (_e, { connectionId, sql, maxRows, tabId }) => {
+  ipcMain.handle('query:runBackground', (_e, { connectionId, sql, maxRows, binds, tabId }) => {
     const jobId = `job_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
     const controller = new AbortController();
     jobs.set(jobId, controller);
     send('job:started', { jobId, tabId, sql });
-
     (async () => {
-      try {
-        const result = await execute(store, connectionId, sql, maxRows, controller.signal);
-        const conn = store.getConnection(connectionId);
-        store.addHistory({
-          sql,
-          connectionId,
-          connectionName: conn && conn.name,
-          rowCount: result.rowCount,
-          elapsedMs: result.elapsedMs,
-          ok: true,
-        });
-        send('job:completed', { jobId, tabId, result });
-        notify('Background query completed', `Job ${jobId} returned ${result.rowCount} rows.`);
-      } catch (err) {
-        store.addHistory({ sql, connectionId, ok: false, error: err.message });
-        send('job:failed', { jobId, tabId, error: err.message, detail: err.detail });
-        notify('Background query failed', err.message);
-      } finally {
-        jobs.delete(jobId);
+      const res = await gateway.runQuery(connectionId, sql, { maxRows, binds, signal: controller.signal });
+      const meta = connName(connectionId);
+      store.addHistory({
+        sql, connectionId, connectionName: meta.name, environment: meta.environment,
+        rowCount: res.ok ? res.result.rowCount : 0, elapsedMs: res.ok ? res.result.elapsedMs : 0,
+        ok: res.ok, error: res.ok ? null : res.error,
+      });
+      if (res.ok) {
+        send('job:completed', { jobId, tabId, result: res.result, meta: res.meta });
+        notify('Query completed', `${res.result.rowCount} rows returned.`);
+      } else {
+        send('job:failed', { jobId, tabId, error: res.error });
+        notify('Query failed', res.error);
       }
+      jobs.delete(jobId);
     })();
-
     return { jobId };
   });
 
@@ -131,67 +104,70 @@ function register(store, getWindow) {
     return { ok: false };
   });
 
-  // ---- Database browser --------------------------------------------------
-  ipcMain.handle('meta:tables', async (_e, { connectionId, filter }) => {
-    try {
-      const result = await execute(store, connectionId, queries.listTables(filter), 500);
-      return { ok: true, result };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+  // ---- metadata ----------------------------------------------------------
+  ipcMain.handle('meta:tables', (_e, { connectionId, filter }) => gateway.metadata(connectionId, 'tables', { filter }));
+  ipcMain.handle('meta:columns', (_e, { connectionId, owner, table }) => gateway.metadata(connectionId, 'columns', { owner, table }));
+  ipcMain.handle('meta:preview', (_e, { connectionId, owner, table, limit }) => gateway.metadata(connectionId, 'preview', { owner, table, limit }));
+
+  // ---- library -----------------------------------------------------------
+  ipcMain.handle('library:list', () => store.listLibrary());
+  ipcMain.handle('library:save', (_e, item) => store.saveLibraryItem(item));
+  ipcMain.handle('library:delete', (_e, id) => {
+    store.deleteLibraryItem(id);
+    return { ok: true };
   });
 
-  ipcMain.handle('meta:columns', async (_e, { connectionId, owner, table }) => {
-    try {
-      const result = await execute(store, connectionId, queries.listColumns(owner, table), 1000);
-      return { ok: true, result };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+  // ---- history -----------------------------------------------------------
+  ipcMain.handle('history:list', (_e, limit) => store.listHistory(limit));
+  ipcMain.handle('history:clear', () => {
+    store.clearHistory();
+    return { ok: true };
   });
 
-  ipcMain.handle('meta:preview', async (_e, { connectionId, owner, table, limit }) => {
-    try {
-      const result = await execute(store, connectionId, queries.previewTable(owner, table, limit), limit || 100);
-      return { ok: true, result };
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+  // ---- audit -------------------------------------------------------------
+  ipcMain.handle('audit:list', (_e, limit, filter) => audit.list(limit, filter));
+  ipcMain.handle('audit:verify', () => audit.verifyChain());
+
+  // ---- ai ----------------------------------------------------------------
+  ipcMain.handle('ai:generate', async (_e, { connectionId, prompt, schema }) => {
+    const res = await ai.generate(prompt, { schema });
+    const meta = connName(connectionId);
+    audit.record(EVENTS.AI_GENERATE, { promptPreview: String(prompt || '').slice(0, 120), ok: res.ok }, { connectionId, ...meta });
+    return res;
   });
 
-  // ---- Export ------------------------------------------------------------
-  ipcMain.handle('export:save', async (_e, { columns, rows, format, defaultName }) => {
-    const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+  // ---- settings ----------------------------------------------------------
+  ipcMain.handle('settings:get', () => store.getSettings());
+  ipcMain.handle('settings:save', (_e, patch) => store.saveSettings(patch));
+
+  // ---- export ------------------------------------------------------------
+  ipcMain.handle('export:save', async (_e, { columns, rows, format, defaultName, meta }) => {
+    const extMap = { csv: 'csv', xlsx: 'xlsx', json: 'json', xml: 'xml' };
+    const ext = extMap[format] || 'csv';
     const { canceled, filePath } = await dialog.showSaveDialog(getWindow(), {
       title: 'Export results',
-      defaultPath: `${defaultName || 'cloudconnect_export'}.${ext}`,
-      filters:
-        ext === 'xlsx'
-          ? [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
-          : [{ name: 'CSV', extensions: ['csv'] }],
+      defaultPath: `${defaultName || 'fusionquery_export'}.${ext}`,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
     });
     if (canceled || !filePath) return { ok: false, canceled: true };
     try {
-      if (ext === 'xlsx') await exporter.writeXlsx(filePath, columns, rows, path.basename(filePath, '.xlsx'));
+      if (ext === 'xlsx') await exporter.writeXlsx(filePath, columns, rows);
+      else if (ext === 'json') await exporter.writeJson(filePath, columns, rows, meta);
+      else if (ext === 'xml') await exporter.writeXml(filePath, columns, rows, meta);
       else await exporter.writeCsv(filePath, columns, rows);
+      audit.record(EVENTS.RESULT_EXPORT, { format: ext, rowCount: rows.length });
       return { ok: true, filePath };
     } catch (err) {
       return { ok: false, error: err.message };
     }
   });
-
-  // ---- History & settings ------------------------------------------------
-  ipcMain.handle('history:list', (_e, limit) => store.listHistory(limit));
-  ipcMain.handle('history:clear', () => store.clearHistory());
-  ipcMain.handle('settings:get', () => store.getSettings());
-  ipcMain.handle('settings:save', (_e, patch) => store.saveSettings(patch));
 }
 
 function notify(title, body) {
   try {
     if (Notification.isSupported()) new Notification({ title, body }).show();
   } catch {
-    /* notifications are best-effort */
+    /* best-effort */
   }
 }
 

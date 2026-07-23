@@ -1,8 +1,8 @@
 {
-  "name": "cloudconnect",
-  "version": "1.0.3",
-  "description": "CloudConnect — a desktop SQL client for running queries against Oracle Fusion Cloud Applications via BI Publisher.",
-  "author": "CloudConnect",
+  "name": "fusionquery-studio",
+  "version": "2.0.0",
+  "description": "FusionQuery Studio — a secure Windows desktop SQL & data-access platform for Oracle Fusion Cloud (BI Publisher), Oracle ADW/ATP, and governed reporting services.",
+  "author": "FusionQuery Studio",
   "license": "MIT",
   "main": "electron/main.js",
   "scripts": {
@@ -27,9 +27,9 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.cloudconnect.app",
-    "productName": "CloudConnect",
-    "copyright": "Copyright © 2026 CloudConnect",
+    "appId": "com.fusionquery.studio",
+    "productName": "FusionQuery Studio",
+    "copyright": "Copyright © 2026 FusionQuery Studio",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "directories": {

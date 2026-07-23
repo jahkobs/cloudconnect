@@ -1,177 +1,129 @@
-# CloudConnect
+# FusionQuery Studio
 
-A desktop SQL client for **Oracle Fusion Cloud Applications** (ERP / SCM / HCM).
-Write SQL against your Fusion environment, browse the schema, run queries in the
-foreground or background, and export results to CSV or Excel — all from a native
-desktop app.
+A secure desktop SQL & data-access platform for **Oracle Fusion Cloud** (ERP /
+HCM / SCM / Procurement / CX) and **Oracle Autonomous Database** (ADW / ATP).
+Write governed, read-only SQL against Fusion reporting data through approved BI
+Publisher services, browse schema, run and export results, draft SQL from plain
+English, and keep a tamper-evident audit trail.
 
-CloudConnect is modeled on the SplashBI *SQL Connect* feature set and built with
-Electron.
+<p align="center"><img src="renderer/assets/icon.svg" width="120" alt="FusionQuery Studio"></p>
 
-<p align="center"><img src="renderer/assets/icon.svg" width="128" alt="CloudConnect"></p>
+> **v2.0** — a ground-up rebuild with a new multi-panel IDE shell and a
+> connector/gateway architecture. Built with Electron; verified headlessly and
+> shipped as a Windows installer.
 
-## Why it works this way
+## Why a gateway, not a database connection
 
-Oracle Fusion SaaS does **not** expose its database on a network port, so you
-cannot connect over JDBC/OCI. The supported path for running SQL is **Oracle
-Analytics Publisher (BI Publisher)**, which ships inside every Fusion pod.
-CloudConnect executes SQL through a small generic *SQL Runner* BI Publisher
-report whose data model uses a lexical parameter (`&p_sql`). BI Publisher
-substitutes that parameter into the data-model SQL before execution, which lets
-an authorized user run arbitrary read queries and get the rows back as CSV.
+Oracle Fusion Cloud **must not** be treated as a normal Oracle database — there
+is no host/port/JDBC/ODBC/wallet path to the transactional DB. FusionQuery
+Studio routes every query through a **Secure Query Gateway** seam that:
 
-See [`assets/report/README.md`](assets/report/README.md) for the report objects
-and deployment details.
+1. resolves the connection and picks the right **connector**,
+2. enforces **read-only SQL** with a parser-based validator (blocks
+   INSERT/UPDATE/DELETE/DDL/PLSQL/db-links/stacked statements),
+3. applies the connection's **row limit** and **timeout**,
+4. records a **tamper-evident audit** event for every execute / reject / export,
+5. returns a uniform result with execution metadata.
 
-## Features
+Today the gateway runs in-process ("direct mode"); the same surface can later
+proxy to an organisation's ASP.NET Core gateway without changing the client.
 
-| Feature | Notes |
-| --- | --- |
-| **Oracle Fusion connectivity** | BI Publisher REST (v2 with v1 fallback) for query execution; SOAP `CatalogService` for one-click report deployment. |
-| **SQL editor** | Native, dependency-free editor with a line-number gutter, tab-key indent, and keyboard run/format. Renders reliably in the packaged app on every platform. |
-| **Connection status** | Toolbar indicator + progress bar showing connecting / connected / reachable / not-connected, with one-click re-test. |
-| **Format SQL** | One-click pretty-printer that respects strings, comments, and quoted identifiers. |
-| **DB Browser** | Searchable schema tree (owners → tables/views → columns) read from the Oracle data dictionary. Double-click a table to preview. |
-| **Results grid** | Virtualized "pageless" scrolling for large result sets, in-grid search/filter, serial column, text selection & copy. |
-| **Multi-result tabs** | Lock a result to keep it while you run another query — compare side by side. |
-| **Background processing** | Run long queries in the background; a jobs tray and OS notification tell you when they finish. |
-| **Data export** | Export the current (optionally filtered) result set to CSV or Excel `.xlsx`. |
-| **Query history** | Every run is recorded (SQL, rows, timing, success/failure); click to reopen. |
-| **Connection manager** | Multiple saved connections; passwords encrypted with the OS keychain via Electron `safeStorage`. |
-| **Demo mode** | A synthetic Fusion schema (`PER_ALL_PEOPLE_F`, `AP_INVOICES_ALL`, `GL_JE_HEADERS`, …) so you can explore the whole app with no pod or credentials. |
+## Connectors
 
-## Getting started
+| Type | Purpose | Status |
+| --- | --- | --- |
+| **Fusion BI Publisher** | Read-only SQL against Fusion reporting data via the protected report services + CatalogService | ✅ core |
+| **Demo** | Synthetic Fusion schema — explore the whole app with no pod | ✅ core |
+| **Oracle ADW / ATP** | Direct read-only SQL over TLS/wallet (uses node-oracledb when provisioned) | ⚙ scaffold |
+| **Fusion REST** | OAuth2 resource queries | ⚙ scaffold |
+| **Oracle BICC** | Bulk / incremental extraction (gateway-backed) | ⚙ scaffold |
 
-```bash
-npm install      # installs dependencies
-npm start        # launch the desktop app
-npm run dev      # launch with DevTools open
-```
+## Features (this release)
 
-> **Note:** `npm start` needs the Electron runtime binary. In restricted/offline
-> environments where the binary can't be downloaded, install with
-> `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install` to get the source and run the
-> test suite; download the binary on a machine with network access to launch the
-> GUI.
+- **Multi-panel IDE** — activity bar → Connections, Schema Browser, Query
+  Library, History, AI Assistant, Audit Log.
+- **Connection manager** — multiple types & environments (DEV/TEST/UAT/PROD),
+  clone/disable/delete, test, and a permanent **production warning banner** with
+  a framed window when a PROD connection is active.
+- **Native SQL editor** — line-number gutter, tab-indent, run / run-selection /
+  format, multiple tabs, live read-only validation and **bind-parameter
+  detection** with a value prompt before execution.
+- **Read-only enforcement** — parser-based (`electron/core/sql-validator.js`),
+  not keyword matching; safe against keywords hidden in strings/comments.
+- **Result grid** — virtualized scrolling, in-grid search, lockable multi-result
+  tabs, execution metadata (rows, environment, connection, params, truncation).
+- **Export** — CSV, Excel, JSON, XML (with optional query/connection metadata).
+- **Query library** — save/organize queries by module, tags, status, version.
+- **AI SQL Assistant** — plain-English → **draft** read-only SQL grounded only
+  in the connection's cached metadata; never auto-executes, always review-first,
+  offline heuristic provider by default (no business data leaves the machine).
+- **Tamper-evident audit** — hash-chained JSONL log with a chain-verify view;
+  secrets are redacted and never logged.
+- **Credential security** — secrets encrypted with the OS keychain
+  (Keychain / libsecret / DPAPI) via Electron `safeStorage`; never in plain text.
+- **Background execution**, notifications, connection status bar + progress.
 
-### Connecting to a Fusion pod
-
-1. Click **⚙** (or **Account → Manage Connections**) and **New connection**.
-2. Enter:
-   - **Pod URL** — e.g. `https://xxxx.fa.us2.oraclecloud.com`
-   - **Username / Password** — a Fusion user with the `BIAuthor`/`BIConsumer`
-     roles and read access to the schemas you query.
-   - **Data Source** — `ApplicationDB_FSCM` (Financials/SCM),
-     `ApplicationDB_HCM`, or `ApplicationDB_CRM`.
-3. Click **Test**, then **Save**.
-4. Click **Deploy SQL Runner** once per pod to upload the report objects
-   (or deploy them manually — see `assets/report/`).
-5. Pick the connection in the top-right selector and start querying.
-
-Prefer to try it first? Add a **demo connection** from the connection manager —
-no pod required.
-
-## Keyboard shortcuts
-
-| Action | Shortcut |
-| --- | --- |
-| Run query | `Ctrl/Cmd + Enter` |
-| Run in background | `Ctrl/Cmd + Shift + Enter` |
-| Cancel | `Ctrl/Cmd + .` |
-| Format SQL | `Ctrl/Cmd + Shift + F` |
-| New tab | `Ctrl/Cmd + T` |
-| Toggle DB Browser | `Ctrl/Cmd + B` |
-| Query history | `Ctrl/Cmd + H` |
-| Export results | `Ctrl/Cmd + E` |
-| Find in editor | `Ctrl/Cmd + F` |
+Phase 2 (scaffolded / planned): Git integration, query approval workflow, REST
+query designer, BICC extraction manager, advanced IntelliSense, result
+comparison, automated Oracle quarterly-update tests.
 
 ## Architecture
 
 ```
 electron/
-  main.js            App lifecycle, window, native menu
-  preload.js         contextIsolated IPC bridge (window.cc)
-  ipc.js             IPC handlers — all network & disk I/O lives here
-  store.js           Connection profiles + history; passwords via safeStorage
-  export.js          CSV / XLSX writers (exceljs streaming)
-  fusion/
-    client.js        BI Publisher REST run + SOAP catalog deploy
-    report.js        Generates the SQL Runner data model/report + zips
-    parser.js        RFC-4180 CSV and BIP XML rowset parsers
-    queries.js       Data-dictionary SQL for the DB Browser
-    demo.js          Synthetic Fusion schema for demo mode
+  main.js                 App lifecycle, native menu, wiring
+  preload.js              contextIsolated bridge (window.fqs)
+  ipc.js                  IPC surface — all privileged work
+  core/
+    sql-validator.js      Parser-based read-only validation + bind detection
+    store.js              Connections / library / history / settings (encrypted)
+    audit.js              Hash-chained tamper-evident audit log
+    ai.js                 NL→SQL assistant (pluggable, offline default)
+  gateway/gateway.js      Governance choke point → connectors
+  connectors/
+    fusion-bip.js  demo.js  adw.js  fusion-rest.js  bicc.js
+  fusion/                 BI Publisher client, report archive, CSV/XML parsers
+  export.js               CSV / Excel / JSON / XML writers
 renderer/
-  index.html         UI shell
-  app.js             UI controller: tabs, jobs, tree, modals, wiring
-  grid.js            Virtualized results grid
-  formatter.js       SQL pretty-printer
-  styles.css         Dark IDE theme
-assets/report/       Raw BI Publisher SQL Runner objects (.xdm/.xdo)
+  index.html  app.js  styles.css   IDE shell
+  grid.js  formatter.js             Virtualized grid + SQL formatter
 ```
 
-The renderer has **no** direct Node, filesystem, or network access
-(`contextIsolation: true`, `nodeIntegration: false`). Everything privileged is
-brokered through the preload bridge to the main process.
+The renderer has no direct Node/filesystem/network access (`contextIsolation`,
+no `nodeIntegration`, strict CSP); everything privileged goes through the
+gateway in the main process.
 
-## Security
-
-- Passwords are encrypted at rest with the OS keychain (Keychain / libsecret /
-  DPAPI) via Electron `safeStorage`; if unavailable, they are not persisted.
-- The renderer runs under a strict Content-Security-Policy and cannot reach the
-  network; external links open in the system browser.
-- The SQL Runner report executes with the privileges of the Fusion data-source
-  user — grant least privilege and rely on Fusion audit logging.
-
-## Development
+## Getting started
 
 ```bash
-npm test         # run the unit test suite (parser, formatter, fusion, demo)
-npm run lint     # syntax-check every source file
-npm run make-icon # regenerate build/icon.png from scratch
+npm install
+npm start           # launch the app
+npm test            # unit tests (validator, audit chain, AI, parsers, formatter)
+npm run lint        # syntax-check every source file
 ```
 
-## Packaging installers
+Try it instantly: **⚙ New connection** isn't needed — open the **Connections**
+panel and click **＋ Add demo connection**, then run the sample query.
 
-Installers are built with [electron-builder](https://www.electron.build/). Each
-installer can only be produced on (or for) its own platform — macOS `.dmg`
-packaging requires macOS, and Windows `.exe` (NSIS) packaging requires Windows
-or Wine — so the reliable, reproducible path is the **Release** GitHub Actions
-workflow, which builds each target on its native runner.
+### Connecting to a Fusion pod
 
-### Via CI (recommended — produces Windows + macOS installers)
+1. Connections panel → **New connection** → type **Oracle Fusion — BI Publisher**.
+2. Set pod URL, username/password (a user with BI Publisher roles), data source,
+   environment. Mark PROD if applicable.
+3. **Deploy SQL Runner** once per pod, then **Test**.
+4. Select it and run read-only SQL.
 
-Push a version tag, or run the **Release** workflow manually from the Actions tab:
+## Packaging (Windows / macOS / Linux)
+
+Installers build on native runners via GitHub Actions:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v2.0.0 && git push origin v2.0.0   # or run the Release workflow
 ```
 
-`.github/workflows/release.yml` then builds in parallel:
-
-| Runner | Artifacts |
-| --- | --- |
-| `macos-latest` | `CloudConnect-<ver>-mac-x64.dmg`, `-arm64.dmg` (+ `.zip`) |
-| `windows-latest` | `CloudConnect-<ver>-win-x64.exe` (NSIS installer + portable) |
-| `ubuntu-latest` | `CloudConnect-<ver>-linux-x86_64.AppImage`, `.deb` |
-
-Artifacts are uploaded to the workflow run; a tag build also attaches them to a
-GitHub Release. macOS builds are **unsigned** (no Apple Developer certificate in
-CI) — to ship signed/notarized builds, add `CSC_LINK`, `CSC_KEY_PASSWORD`, and
-notarization credentials as repository secrets.
-
-### Locally (current platform only)
-
-```bash
-npm run dist         # build for the current OS
-npm run dist:mac     # macOS only  (must run on macOS)
-npm run dist:win     # Windows only (Windows, or Linux/macOS with Wine)
-npm run dist:linux   # Linux only
-npm run pack         # unpacked app (no installer) for quick testing
-```
-
-Output lands in `release/`. The app icon is generated from `build/icon.png`
-(1024×1024); electron-builder converts it to `.icns` / `.ico` per platform.
+Produces `FusionQuery Studio-<ver>-win-x64.exe` (NSIS + portable), macOS
+`.dmg`, and Linux `.AppImage`/`.deb`, attached to a GitHub Release. macOS builds
+are unsigned unless signing secrets are configured.
 
 ## License
 

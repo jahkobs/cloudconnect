@@ -1,39 +1,31 @@
 'use strict';
 
 /**
- * Secure bridge exposed to the renderer. The renderer has no direct access to
- * Node, the filesystem, or the network — only the whitelisted functions below,
- * which forward to IPC handlers in the main process.
+ * Secure bridge for FusionQuery Studio. The renderer gets only the whitelisted
+ * `window.fqs` surface — no Node, filesystem, or network access.
  */
 
 const { contextBridge, ipcRenderer } = require('electron');
-
-const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
-
-// Main-process → renderer events (menu commands, background job lifecycle).
-const listeners = new Map();
-function on(channel, cb) {
+const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+const on = (channel, cb) => {
   const wrapped = (_e, payload) => cb(payload);
   ipcRenderer.on(channel, wrapped);
-  listeners.set(cb, { channel, wrapped });
-  return () => {
-    ipcRenderer.removeListener(channel, wrapped);
-    listeners.delete(cb);
-  };
-}
+  return () => ipcRenderer.removeListener(channel, wrapped);
+};
 
-contextBridge.exposeInMainWorld('cc', {
-  app: {
-    info: () => invoke('app:info'),
-  },
+contextBridge.exposeInMainWorld('fqs', {
+  app: { info: () => invoke('app:info') },
   connections: {
     list: () => invoke('connections:list'),
     save: (conn) => invoke('connections:save', conn),
     delete: (id) => invoke('connections:delete', id),
-    test: (connOrId) => invoke('connections:test', connOrId),
+    clone: (id) => invoke('connections:clone', id),
+    test: (id) => invoke('connections:test', id),
     deploy: (id) => invoke('connections:deploy', id),
+    capabilities: (id) => invoke('connections:capabilities', id),
   },
   query: {
+    validate: (sql) => invoke('query:validate', sql),
     run: (args) => invoke('query:run', args),
     runBackground: (args) => invoke('query:runBackground', args),
     cancel: (jobId) => invoke('query:cancel', jobId),
@@ -43,16 +35,23 @@ contextBridge.exposeInMainWorld('cc', {
     columns: (args) => invoke('meta:columns', args),
     preview: (args) => invoke('meta:preview', args),
   },
-  exportResults: (args) => invoke('export:save', args),
+  library: {
+    list: () => invoke('library:list'),
+    save: (item) => invoke('library:save', item),
+    delete: (id) => invoke('library:delete', id),
+  },
   history: {
     list: (limit) => invoke('history:list', limit),
     clear: () => invoke('history:clear'),
   },
-  settings: {
-    get: () => invoke('settings:get'),
-    save: (patch) => invoke('settings:save', patch),
+  audit: {
+    list: (limit, filter) => invoke('audit:list', limit, filter),
+    verify: () => invoke('audit:verify'),
   },
-  // Event subscriptions.
+  ai: { generate: (args) => invoke('ai:generate', args) },
+  settings: { get: () => invoke('settings:get'), save: (patch) => invoke('settings:save', patch) },
+  export: (args) => invoke('export:save', args),
+
   onJobStarted: (cb) => on('job:started', cb),
   onJobCompleted: (cb) => on('job:completed', cb),
   onJobFailed: (cb) => on('job:failed', cb),

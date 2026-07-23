@@ -4,64 +4,70 @@
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
-  <title>CloudConnect</title>
+  <title>FusionQuery Studio</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div id="app">
-    <!-- Toolbar -->
-    <header class="toolbar">
+  <div id="app" class="app">
+    <!-- Production warning banner (shown only when the active connection is PROD) -->
+    <div id="prod-banner" class="prod-banner" hidden>
+      ⚠ PRODUCTION ENVIRONMENT — queries run against live data. Row limits and read-only rules are enforced.
+    </div>
+
+    <!-- Title / top bar -->
+    <header class="topbar">
       <div class="brand">
         <span class="brand-mark">◆</span>
-        <span class="brand-name">Cloud<strong>Connect</strong></span>
+        <span class="brand-name">FusionQuery<strong>Studio</strong></span>
+        <span class="brand-ver" id="app-version">v2.0</span>
       </div>
-      <div class="toolbar-actions">
-        <button id="btn-run" class="btn btn-run" title="Run (Ctrl/Cmd+Enter)">▶ Run</button>
-        <button id="btn-cancel" class="btn btn-ghost" title="Cancel (Ctrl/Cmd+.)" disabled>■ Stop</button>
+      <div class="topbar-actions">
+        <button id="btn-run" class="btn btn-run" title="Run (Ctrl+Enter)">▶ Run</button>
+        <button id="btn-run-sel" class="btn btn-ghost" title="Run selection (Ctrl+Shift+Enter)">▷ Selection</button>
+        <button id="btn-cancel" class="btn btn-ghost" disabled title="Cancel (Ctrl+.)">■ Stop</button>
         <span class="divider"></span>
-        <button id="btn-format" class="btn btn-ghost" title="Format SQL (Ctrl/Cmd+Shift+F)">⌘ Format SQL</button>
-        <button id="btn-new-tab" class="btn btn-ghost" title="New tab (Ctrl/Cmd+T)">＋ New</button>
+        <button id="btn-format" class="btn btn-ghost" title="Format SQL (Ctrl+Shift+F)">⌘ Format</button>
+        <button id="btn-save-lib" class="btn btn-ghost" title="Save to library">✚ Save</button>
         <span class="divider"></span>
-        <label class="inline-field">
-          Max Rows
-          <input id="max-rows" type="number" min="1" max="1000000" value="100" />
+        <label class="inline-field">Max rows
+          <input id="max-rows" type="number" min="1" max="1000000" value="10000" />
         </label>
-        <label class="inline-field checkbox">
-          <input id="run-background" type="checkbox" /> Run in Background
-        </label>
+        <label class="inline-field checkbox"><input id="run-background" type="checkbox" /> Background</label>
       </div>
-      <div class="toolbar-right">
-        <!-- Connection status indicator + progress bar -->
+      <div class="topbar-right">
         <div id="conn-status" class="conn-status state-idle" title="Connection status">
           <span class="conn-dot"></span>
           <span id="conn-status-text" class="conn-status-text">Not connected</span>
           <div class="conn-progress"><div id="conn-progress-bar" class="conn-progress-bar"></div></div>
         </div>
-        <label class="conn-picker">
-          Connection
-          <select id="connection-select"><option value="">— none —</option></select>
-        </label>
+        <select id="connection-select" title="Active connection"><option value="">— no connection —</option></select>
         <button id="btn-reconnect" class="btn btn-ghost" title="Test / reconnect">⟳</button>
-        <button id="btn-connections" class="btn btn-ghost" title="Manage connections">⚙</button>
+        <span id="role-badge" class="role-badge" title="Current role">Query Developer</span>
       </div>
     </header>
 
-    <div class="main">
-      <!-- DB Browser -->
-      <aside id="db-browser" class="db-browser">
-        <div class="panel-head">
-          <span>DB Browser</span>
-          <button id="btn-refresh-tree" class="icon-btn" title="Refresh">⟳</button>
+    <div class="body">
+      <!-- Activity bar -->
+      <nav class="activity-bar" id="activity-bar">
+        <button class="act active" data-panel="connections" title="Connections">🔌</button>
+        <button class="act" data-panel="schema" title="Schema Browser">🗂️</button>
+        <button class="act" data-panel="library" title="Query Library">📚</button>
+        <button class="act" data-panel="history" title="Query History">🕑</button>
+        <button class="act" data-panel="ai" title="AI SQL Assistant">✨</button>
+        <button class="act" data-panel="audit" title="Audit Log">🛡️</button>
+      </nav>
+
+      <!-- Side panel (content swapped by activity bar) -->
+      <aside class="side-panel" id="side-panel">
+        <div class="side-head"><span id="side-title">Connections</span>
+          <button id="side-action" class="icon-btn" title="Add">＋</button>
         </div>
-        <div class="tree-search">
-          <input id="tree-filter" type="search" placeholder="Filter tables & columns…" />
-        </div>
-        <div id="tree" class="tree"><div class="tree-empty">Connect to browse schema.</div></div>
+        <div class="side-body" id="side-body"></div>
       </aside>
 
-      <div class="splitter" data-target="db-browser"></div>
+      <div class="splitter" id="splitter-v"></div>
 
-      <!-- Editor + results -->
+      <!-- Workspace: editor + results -->
       <section class="workspace">
         <div class="tabs" id="editor-tabs"></div>
         <div class="editor-area">
@@ -69,21 +75,30 @@
             <div id="gutter" class="gutter" aria-hidden="true"></div>
             <textarea id="sql-input" class="sql-input" spellcheck="false" wrap="off"
                       autocomplete="off" autocorrect="off" autocapitalize="off"
-                      placeholder="-- Type SQL here and press Ctrl/Cmd+Enter to run&#10;SELECT * FROM FUSION.PER_ALL_PEOPLE_F FETCH FIRST 100 ROWS ONLY"></textarea>
+                      placeholder="-- Write read-only SQL. Ctrl+Enter to run.&#10;SELECT * FROM FUSION.PER_ALL_PEOPLE_F FETCH FIRST 100 ROWS ONLY"></textarea>
           </div>
+          <div id="validation-bar" class="validation-bar" hidden></div>
         </div>
 
-        <div class="hsplitter"></div>
+        <div class="hsplitter" id="splitter-h"></div>
 
         <div class="results">
           <div class="results-head">
             <div class="result-tabs" id="result-tabs"></div>
             <div class="results-actions">
               <input id="grid-search" type="search" placeholder="Search results…" />
-              <button id="btn-export-csv" class="btn btn-ghost">Export CSV</button>
-              <button id="btn-export-xlsx" class="btn btn-ghost">Export Excel</button>
+              <div class="export-menu">
+                <button id="btn-export" class="btn btn-ghost">Export ▾</button>
+                <div class="export-dropdown" id="export-dropdown" hidden>
+                  <button data-fmt="csv">CSV</button>
+                  <button data-fmt="xlsx">Excel</button>
+                  <button data-fmt="json">JSON</button>
+                  <button data-fmt="xml">XML</button>
+                </div>
+              </div>
             </div>
           </div>
+          <div class="result-meta" id="result-meta"></div>
           <div id="grid" class="grid"></div>
           <div class="status-bar">
             <span id="status-msg">Ready.</span>
@@ -93,20 +108,12 @@
       </section>
     </div>
 
-    <!-- Jobs tray -->
     <div id="jobs-tray" class="jobs-tray"></div>
   </div>
 
-  <!-- Connection manager modal -->
-  <div id="modal-backdrop" class="modal-backdrop" hidden>
-    <div class="modal" id="modal"></div>
-  </div>
-
-  <!-- Toasts -->
+  <div id="modal-backdrop" class="modal-backdrop" hidden><div class="modal" id="modal"></div></div>
   <div id="toasts" class="toasts"></div>
 
-  <!-- External scripts only (CSP forbids inline scripts). No heavyweight editor
-       dependency: the SQL editor is a native textarea, so it always renders. -->
   <script src="formatter.js"></script>
   <script src="grid.js"></script>
   <script src="app.js"></script>
