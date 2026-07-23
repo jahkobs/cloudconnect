@@ -10,32 +10,86 @@
     "dev": "electron . --dev",
     "test": "node --test test/*.test.js",
     "lint": "node -c electron/main.js && node scripts/syntax-check.js",
+    "make-icon": "node scripts/make-icon.js",
     "postinstall": "node scripts/fetch-monaco.js",
-    "dist": "electron-builder"
+    "prepack": "node scripts/fetch-monaco.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^4.5.0",
-    "jszip": "^3.10.1",
-    "monaco-editor": "^0.52.0"
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "electron": "^31.3.1",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "monaco-editor": "^0.52.0"
   },
   "build": {
     "appId": "com.cloudconnect.app",
     "productName": "CloudConnect",
+    "copyright": "Copyright © 2026 CloudConnect",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
     "files": [
       "electron/**/*",
       "renderer/**/*",
-      "assets/**/*"
+      "!renderer/vendor/monaco/vs/**/*.map",
+      "package.json"
     ],
-    "directories": {
-      "output": "release"
+    "extraResources": [
+      {
+        "from": "assets/report",
+        "to": "report",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "darkModeSupport": true,
+      "identity": null,
+      "hardenedRuntime": false
     },
-    "win": { "target": "nsis" },
-    "mac": { "target": "dmg" },
-    "linux": { "target": "AppImage" }
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        { "x": 140, "y": 200, "type": "file" },
+        { "x": 400, "y": 200, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CloudConnect"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "maintainer": "CloudConnect"
+    }
   }
 }
