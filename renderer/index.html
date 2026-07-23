@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:;" />
   <title>CloudConnect</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -103,16 +103,41 @@
   <script src="vendor/monaco/vs/loader.js" onerror="window.__monacoMissing=true"></script>
   <script>
     (function () {
-      if (window.__monacoMissing || typeof require === 'undefined') {
+      // Monaco language services run in Web Workers, which fail to load from a
+      // file:// URL inside an asar archive. Point the worker URL at an empty
+      // data: script so the editor renders on the main thread (syntax
+      // highlighting + our own completions still work) instead of erroring.
+      self.MonacoEnvironment = {
+        getWorkerUrl: function () {
+          return 'data:text/javascript;charset=utf-8,';
+        },
+      };
+
+      // Safety net: whatever happens with Monaco, the user must get an editor.
+      // If nothing has initialized within 4s (loader hang, asar path issue),
+      // fall back to the plain editor so the app is always usable.
+      var fallbackTimer = setTimeout(function () {
         window.CloudConnect && window.CloudConnect.initEditor(null);
+      }, 4000);
+      function done(monaco) {
+        clearTimeout(fallbackTimer);
+        window.CloudConnect && window.CloudConnect.initEditor(monaco);
+      }
+
+      if (window.__monacoMissing || typeof require === 'undefined') {
+        done(null);
         return;
       }
-      require.config({ paths: { vs: 'vendor/monaco/vs' } });
-      require(['vs/editor/editor.main'], function () {
-        window.CloudConnect.initEditor(window.monaco);
-      }, function () {
-        window.CloudConnect.initEditor(null);
-      });
+      try {
+        require.config({ paths: { vs: 'vendor/monaco/vs' } });
+        require(['vs/editor/editor.main'], function () {
+          done(window.monaco);
+        }, function () {
+          done(null);
+        });
+      } catch (e) {
+        done(null);
+      }
     })();
   </script>
 </body>

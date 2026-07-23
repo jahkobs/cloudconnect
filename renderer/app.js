@@ -148,33 +148,51 @@ SELECT person_number,
 
   // ------------------------------------------------------------- Monaco init
   function initEditor(monaco) {
+    // Guard: the loader's timeout fallback and Monaco's own callback can both
+    // fire — only the first call wins.
+    if (state._editorInitialized) return;
+    state._editorInitialized = true;
+
     if (monaco) {
-      state.monaco = monaco;
-      configureSqlLanguage(monaco);
-      state.editor = monaco.editor.create($('#monaco'), {
-        value: '',
-        language: 'sql',
-        theme: 'cc-dark',
-        automaticLayout: true,
-        minimap: { enabled: true },
-        fontSize: 13,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        scrollBeyondLastLine: false,
-        renderLineHighlight: 'all',
-        smoothScrolling: true,
-        tabSize: 2,
-      });
-      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runQuery(false));
-      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => runQuery(true));
-      state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, formatSql);
+      try {
+        state.monaco = monaco;
+        configureSqlLanguage(monaco);
+        state.editor = monaco.editor.create($('#monaco'), {
+          value: '',
+          language: 'sql',
+          theme: 'cc-dark',
+          automaticLayout: true,
+          minimap: { enabled: true },
+          fontSize: 13,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          scrollBeyondLastLine: false,
+          renderLineHighlight: 'all',
+          smoothScrolling: true,
+          tabSize: 2,
+        });
+        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runQuery(false));
+        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => runQuery(true));
+        state.editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, formatSql);
+      } catch (err) {
+        // Monaco loaded but failed to instantiate — degrade gracefully.
+        console.error('Monaco init failed, falling back to plain editor:', err);
+        state.monaco = null;
+        state.editor = null;
+        state.usingFallback = true;
+      }
     } else {
-      // Fallback plain editor.
       state.usingFallback = true;
-      $('#monaco').hidden = true;
-      $('#fallback-editor').hidden = false;
-      toast('Monaco editor not available — using plain editor. Run "npm install" to enable rich editing.', 'warn', 6000);
     }
-    // First tab
+
+    if (state.usingFallback) {
+      const mon = $('#monaco');
+      const fb = $('#fallback-editor');
+      if (mon) mon.hidden = true;
+      if (fb) fb.hidden = false;
+      toast('Rich editor unavailable — using the plain SQL editor.', 'warn', 5000);
+    }
+
+    // First tab (always create it, whichever editor is active).
     newTab('Query 1', SAMPLE_SQL);
     if (state.usingFallback) $('#fallback-textarea').value = SAMPLE_SQL;
   }
@@ -563,7 +581,7 @@ SELECT person_number,
           test.textContent = 'Testing…';
           const r = await cc.connections.test(c.id);
           test.textContent = 'Test';
-          if (r.ok) toast(`Connected (${r.version || 'ok'}).`, 'success');
+          if (r.ok) toast(r.warning ? r.warning : `Connected (${r.version || 'ok'}).`, r.warning ? 'warn' : 'success', r.warning ? 8000 : 3500);
           else toast(`Failed: ${r.error}`, 'error', 6000);
         });
         const del = el('button', 'btn btn-ghost small danger', 'Delete');
@@ -664,7 +682,7 @@ SELECT person_number,
           testBtn.textContent = 'Testing…';
           const r = await cc.connections.test({ ...editing });
           testBtn.textContent = 'Test';
-          if (r.ok) toast(`Connected (${r.version || 'ok'}).`, 'success');
+          if (r.ok) toast(r.warning ? r.warning : `Connected (${r.version || 'ok'}).`, r.warning ? 'warn' : 'success', r.warning ? 8000 : 3500);
           else toast(`Failed: ${r.error}`, 'error', 6000);
         });
         actions.append(save, testBtn, deploy);

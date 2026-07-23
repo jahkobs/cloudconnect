@@ -1,6 +1,6 @@
 {
   "name": "cloudconnect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CloudConnect — a desktop SQL client for running queries against Oracle Fusion Cloud Applications via BI Publisher.",
   "author": "CloudConnect",
   "license": "MIT",

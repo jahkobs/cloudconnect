@@ -85,34 +85,90 @@ class FusionClient {
   }
 
   /**
-   * Verify credentials and pod reachability by hitting the BI Publisher
-   * server info endpoint. Returns { ok, version, serverTime }.
+   * Verify credentials and pod reachability.
+   *
+   * Primary probe is the BI Publisher server-version endpoint. Some pods return
+   * 500/404 there even when BI Publisher is reachable and the credentials are
+   * valid, so on a non-auth failure we fall back to probing the BI Publisher
+   * home path to distinguish "pod reachable, keep going" from "pod unreachable"
+   * and surface the server's own response text to aid diagnosis.
    */
   async testConnection(signal) {
-    const url = `${this.pod}/xmlpserver/services/rest/v1/system/version`;
-    const res = await this._fetch(
-      url,
-      { method: 'GET', headers: { Authorization: this.authHeader, Accept: 'application/json' } },
-      signal
-    );
-    if (res.status === 401 || res.status === 403) {
-      throw new FusionError('Authentication failed. Check the username and password.', {
-        status: res.status,
-      });
-    }
-    if (!res.ok) {
-      throw new FusionError(`Unexpected response from pod (HTTP ${res.status}).`, {
-        status: res.status,
-      });
-    }
-    let version = 'unknown';
+    const versionUrl = `${this.pod}/xmlpserver/services/rest/v1/system/version`;
+    let res;
     try {
-      const body = await res.json();
-      version = body.version || body.productVersion || 'unknown';
-    } catch {
-      /* version endpoint may return plain text on some pods */
+      res = await this._fetch(
+        versionUrl,
+        { method: 'GET', headers: { Authorization: this.authHeader, Accept: 'application/json' } },
+        signal
+      );
+    } catch (err) {
+      throw new FusionError(
+        `Could not reach the pod. Check the Pod URL (expected https://<host>.fa.<dc>.oraclecloud.com). ${err.message}`,
+        { detail: versionUrl }
+      );
     }
-    return { ok: true, version, pod: this.pod };
+
+    if (res.status === 401 || res.status === 403) {
+      throw new FusionError(
+        'Authentication failed (HTTP ' +
+          res.status +
+          '). Check the username and password, and that the user holds the BI Publisher roles (BIConsumer/BIAuthor).',
+        { status: res.status }
+      );
+    }
+
+    if (res.ok) {
+      let version = 'unknown';
+      try {
+        const body = await res.json();
+        version = body.version || body.productVersion || 'unknown';
+      } catch {
+        /* version endpoint may return plain text on some pods */
+      }
+      return { ok: true, version, pod: this.pod };
+    }
+
+    // Non-auth error on the version endpoint: fall back to a reachability probe.
+    const bodySnippet = (await safeText(res)).slice(0, 240);
+    const reachable = await this._probeReachable(signal);
+    if (reachable) {
+      // BI Publisher answered elsewhere — credentials likely OK, this endpoint
+      // is just unavailable. Let the user proceed (queries use a different API).
+      return {
+        ok: true,
+        version: 'unknown',
+        pod: this.pod,
+        warning:
+          `The version endpoint returned HTTP ${res.status}, but BI Publisher is reachable. ` +
+          'Credentials appear accepted — deploy the SQL Runner report (if not done) and try a query.',
+      };
+    }
+
+    throw new FusionError(
+      `Unexpected response from pod (HTTP ${res.status}). ` +
+        'Verify the Pod URL is the base Fusion host with no extra path, that BI Publisher ' +
+        '(/xmlpserver) is enabled, and that the pod is reachable from your network' +
+        (bodySnippet ? `. Server said: ${bodySnippet}` : '.'),
+      { status: res.status, detail: bodySnippet }
+    );
+  }
+
+  /**
+   * Lightweight reachability check for the embedded BI Publisher app. Any
+   * HTTP answer (200/302/401/403) means the host and /xmlpserver path respond.
+   */
+  async _probeReachable(signal) {
+    try {
+      const res = await this._fetch(
+        `${this.pod}/xmlpserver/servlet/home`,
+        { method: 'GET', headers: { Authorization: this.authHeader, Accept: '*/*' }, redirect: 'manual' },
+        signal
+      );
+      return res.status > 0 && res.status < 500;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -276,6 +332,14 @@ class FusionClient {
 
 function stripTrailingSemicolon(sql) {
   return String(sql || '').trim().replace(/;+\s*$/, '');
+}
+
+async function safeText(res) {
+  try {
+    return (await res.text()) || '';
+  } catch {
+    return '';
+  }
 }
 
 function encodeReportPath(path) {
