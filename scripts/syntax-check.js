@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const roots = ['electron', 'scripts', 'test'];
-const rendererFiles = ['renderer/app.js', 'renderer/formatter.js', 'renderer/grid.js'];
+const rendererFiles = ['renderer/app.js', 'renderer/formatter.js', 'renderer/grid.js', 'renderer/editor-boot.js'];
 
 function walk(dir, out) {
   if (!fs.existsSync(dir)) return;
