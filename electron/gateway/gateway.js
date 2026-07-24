@@ -156,6 +156,74 @@ class Gateway {
     if (!conn) return null;
     return this._connector(conn).capabilities;
   }
+
+  /**
+   * Step-by-step connection diagnostics — pinpoints exactly which stage of the
+   * BI Publisher pipeline fails so a user can act (deploy report, fix roles,
+   * correct the pod URL). Each step carries a remedy hint.
+   * @returns {Promise<{ok, steps: {step, ok, detail, remedy?}[]}>}
+   */
+  async diagnose(connectionId) {
+    const conn = this.store.getConnection(connectionId);
+    if (!conn) return { ok: false, steps: [{ step: 'Resolve connection', ok: false, detail: 'Connection not found.' }] };
+    const connector = this._connector(conn);
+    const steps = [];
+
+    // 1. Reachability + authentication
+    try {
+      const t = await connector.testConnection();
+      steps.push({
+        step: 'Reach pod & authenticate',
+        ok: !!t.ok,
+        detail: t.ok ? (t.warning || `OK${t.version ? ' · ' + t.version : ''}`) : t.error,
+        remedy: t.ok ? null : 'Check the pod URL (https://<host>.fa.<dc>.oraclecloud.com) and the username/password. The user needs BI Publisher roles (BIConsumer/BIAuthor).',
+      });
+    } catch (e) {
+      steps.push({ step: 'Reach pod & authenticate', ok: false, detail: e.message, remedy: 'Verify network/VPN/proxy access to the pod.' });
+    }
+
+    if (connector.type === 'fusion-rest' || connector.type === 'bicc') {
+      return { ok: steps.every((s) => s.ok), steps };
+    }
+
+    // 2. Execute SELECT 1 through the SQL Runner report (proves it is deployed + runs)
+    try {
+      const r = await connector.runQuery('SELECT 1 AS ok FROM DUAL', { maxRows: 1 });
+      const got = r && r.rowCount >= 1;
+      steps.push({
+        step: 'Execute SELECT 1 via SQL Runner report',
+        ok: got,
+        detail: got ? 'Report executed and returned a row.' : 'Report ran but returned no rows.',
+        remedy: got ? null : 'The report exists but produced no data — check the data model data source.',
+      });
+    } catch (e) {
+      const notFound = /not found|404/i.test(e.message || '');
+      steps.push({
+        step: 'Execute SELECT 1 via SQL Runner report',
+        ok: false,
+        detail: e.message,
+        remedy: notFound
+          ? 'The SQL Runner report is not deployed on this pod. Use “Deploy SQL Runner” on the connection (needs BIAuthor to write /Custom).'
+          : 'BI Publisher rejected the run — confirm the report path and that the account can run reports. Full detail: ' + (e.detail || '').slice(0, 300),
+      });
+    }
+
+    // 3. Read the data dictionary (schema browser source)
+    try {
+      const r = await connector.metadata('tables', {});
+      const n = r && r.rowCount;
+      steps.push({
+        step: 'Read data dictionary (schema browser)',
+        ok: n > 0,
+        detail: n > 0 ? `${n} objects visible.` : 'No objects visible.',
+        remedy: n > 0 ? null : 'The account can run reports but sees no ALL_TABLES rows — grant read access to the reporting schema/data source.',
+      });
+    } catch (e) {
+      steps.push({ step: 'Read data dictionary (schema browser)', ok: false, detail: e.message, remedy: 'Same SQL Runner report is used for the schema browser; fix step 2 first.' });
+    }
+
+    return { ok: steps.every((s) => s.ok), steps };
+  }
 }
 
 module.exports = { Gateway, CONNECTORS };

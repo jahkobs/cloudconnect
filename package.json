@@ -1,6 +1,6 @@
 {
   "name": "fusionquery-studio",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "FusionQuery Studio — a secure Windows desktop SQL & data-access platform for Oracle Fusion Cloud (BI Publisher), Oracle ADW/ATP, and governed reporting services.",
   "author": "FusionQuery Studio",
   "license": "MIT",

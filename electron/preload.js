@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('fqs', {
     delete: (id) => invoke('connections:delete', id),
     clone: (id) => invoke('connections:clone', id),
     test: (id) => invoke('connections:test', id),
+    diagnose: (id) => invoke('connections:diagnose', id),
     deploy: (id) => invoke('connections:deploy', id),
     capabilities: (id) => invoke('connections:capabilities', id),
   },

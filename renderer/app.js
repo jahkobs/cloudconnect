@@ -347,10 +347,12 @@ SELECT person_number,
     });
   }
   function showError(message, detail) {
-    ensureGrid().setData(['ERROR'], [[message]]);
-    $('#result-meta').textContent = '';
+    const rows = [[message]];
+    if (detail) rows.push([String(detail).slice(0, 2000)]);
+    ensureGrid().setData(['ERROR'], rows);
+    $('#result-meta').textContent = 'Query error — see the grid. Use 🩺 Diagnose on the connection to pinpoint the cause.';
     if (detail) console.error('Detail:', detail);
-    toast(message, 'error', 6000);
+    toast(message, 'error', 7000);
   }
 
   // ------------------------------------------------------------- jobs tray
@@ -481,6 +483,7 @@ SELECT person_number,
       row.addEventListener('click', () => selectConnection(c.id));
       const actions = el('div', 'conn-card-actions');
       actions.append(
+        iconBtn('🩺', 'Diagnose', (e) => { e.stopPropagation(); runDiagnostics(c.id, c.name); }),
         iconBtn('✎', 'Edit', (e) => { e.stopPropagation(); openConnectionForm(c.id); }),
         iconBtn('⧉', 'Clone', async (e) => { e.stopPropagation(); await fqs.connections.clone(c.id); await reloadConnections(); }),
         iconBtn('🗑', 'Delete', async (e) => { e.stopPropagation(); if (confirm(`Delete connection "${c.name}"?`)) { await fqs.connections.delete(c.id); await reloadConnections(); } })
@@ -646,6 +649,42 @@ SELECT person_number,
     draw();
     $('#modal-backdrop').hidden = false;
   }
+  async function runDiagnostics(id, name) {
+    const modal = $('#modal');
+    modal.innerHTML = '';
+    modal.appendChild(el('div', 'modal-title', `Diagnose · ${name}`));
+    const list = el('div', 'diag-list');
+    list.appendChild(el('div', 'diag-running', 'Running checks…'));
+    modal.appendChild(list);
+    const footer = el('div', 'modal-footer');
+    const deployB = el('button', 'btn btn-ghost', 'Deploy SQL Runner');
+    deployB.addEventListener('click', async () => {
+      deployB.textContent = 'Deploying…';
+      const r = await fqs.connections.deploy(id);
+      deployB.textContent = 'Deploy SQL Runner';
+      toast(r.ok ? `Deployed to ${r.reportPath}.` : `Deploy failed: ${r.error}`, r.ok ? 'success' : 'error', 7000);
+      if (r.ok) runDiagnostics(id, name);
+    });
+    const copy = el('button', 'btn btn-ghost', 'Copy report');
+    const close = el('button', 'btn btn-run', 'Close');
+    close.addEventListener('click', hideModal);
+    footer.append(deployB, copy, close);
+    modal.appendChild(footer);
+    $('#modal-backdrop').hidden = false;
+
+    const res = await fqs.connections.diagnose(id);
+    list.innerHTML = '';
+    let report = `Diagnostics for ${name}\n`;
+    for (const s of res.steps) {
+      const row = el('div', 'diag-step ' + (s.ok ? 'ok' : 'bad'));
+      row.innerHTML = `<div class="diag-head">${s.ok ? '✓' : '✗'} ${esc(s.step)}</div>
+        <div class="diag-detail">${esc(s.detail || '')}</div>${s.remedy ? `<div class="diag-remedy">➤ ${esc(s.remedy)}</div>` : ''}`;
+      list.appendChild(row);
+      report += `${s.ok ? 'PASS' : 'FAIL'} — ${s.step}: ${s.detail || ''}${s.remedy ? ' | remedy: ' + s.remedy : ''}\n`;
+    }
+    copy.addEventListener('click', () => { navigator.clipboard && navigator.clipboard.writeText(report); toast('Diagnostics copied.', 'success'); });
+  }
+
   async function selectConnection(id) {
     state.connectionId = id;
     $('#connection-select').value = id;

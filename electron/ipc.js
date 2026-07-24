@@ -49,6 +49,7 @@ function register({ store, gateway, audit, ai }, getWindow) {
   });
   ipcMain.handle('connections:clone', (_e, id) => store.cloneConnection(id));
   ipcMain.handle('connections:test', (_e, id) => gateway.test(id));
+  ipcMain.handle('connections:diagnose', (_e, id) => gateway.diagnose(id));
   ipcMain.handle('connections:deploy', (_e, id) => gateway.deploy(id));
   ipcMain.handle('connections:capabilities', (_e, id) => gateway.capabilities(id));
 
