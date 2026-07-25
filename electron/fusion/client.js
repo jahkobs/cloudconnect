@@ -21,7 +21,7 @@
  */
 
 const { XMLParser } = require('fast-xml-parser');
-const { parseCsv } = require('./parser');
+const { parseCsv, parseXmlRowset } = require('./parser');
 const { buildReportArchive } = require('./report');
 
 const DEFAULT_REPORT_PATH = '/Custom/CloudConnect/SQLRunner.xdo';
@@ -182,8 +182,15 @@ class FusionClient {
   async runQuery(sql, opts = {}) {
     const started = Date.now();
     const cleaned = stripTrailingSemicolon(sql);
-    const csv = await this._runReportCsv(cleaned, opts.signal);
-    let { columns, rows } = parseCsv(csv);
+    const text = await this._runReport(cleaned, opts.signal);
+
+    // BI Publisher may return CSV or an XML rowset depending on how the report
+    // template resolves on a given pod — detect and parse whichever came back.
+    let parsed;
+    if (looksLikeXml(text)) parsed = parseXmlRowset(text);
+    else parsed = parseCsv(text);
+    let { columns, rows } = parsed;
+
     let truncated = false;
     if (opts.maxRows && rows.length > opts.maxRows) {
       rows = rows.slice(0, opts.maxRows);
@@ -199,14 +206,39 @@ class FusionClient {
     };
   }
 
-  async _runReportCsv(sql, signal) {
-    // Try REST v2 first (multipart), fall back to v1 (JSON) for older pods.
-    try {
-      return await this._runV2(sql, signal);
-    } catch (err) {
-      if (err instanceof FusionError && err.status && err.status !== 404) throw err;
-      return await this._runV1(sql, signal);
+  /**
+   * Run the SQL Runner report and return its decoded text output. Tries the
+   * transports most-to-least modern, so a pod that has any one of them enabled
+   * will work: REST v2 → REST v1 → SOAP ExternalReportWSSService (the protected
+   * service Oracle recommends for synchronous report calls). The first
+   * transport that returns data wins; a 404 (report missing) short-circuits with
+   * a clear message rather than trying every transport.
+   */
+  async _runReport(sql, signal) {
+    const attempts = [
+      ['REST v2', () => this._runV2(sql, signal)],
+      ['REST v1', () => this._runV1(sql, signal)],
+      ['SOAP', () => this._runSoap(sql, signal)],
+    ];
+    let notFound = false;
+    let lastErr = null;
+    for (const [, fn] of attempts) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (err instanceof FusionError && err.status === 404) notFound = true;
+        // Auth failures won't improve on another transport — surface immediately.
+        if (err instanceof FusionError && (err.status === 401 || err.status === 403)) throw err;
+      }
     }
+    if (notFound) {
+      throw new FusionError(
+        'SQL Runner report not found on the pod. Deploy it first (🩺 Diagnose → Deploy SQL Runner).',
+        { status: 404, detail: lastErr && lastErr.detail }
+      );
+    }
+    throw lastErr || new FusionError('Query execution failed on all transports.');
   }
 
   async _runV2(sql, signal) {
@@ -284,6 +316,41 @@ class FusionClient {
   }
 
   /**
+   * Run via the SOAP ExternalReportWSSService.runReport operation — the
+   * protected synchronous report service Oracle recommends. Works on pods where
+   * the BI Publisher REST API is disabled. The report bytes come back
+   * base64-encoded inside <reportBytes>.
+   */
+  async _runSoap(sql, signal) {
+    const url = `${this.pod}/xmlpserver/services/ExternalReportWSSService`;
+    const envelope = soapRunReportEnvelope({ reportPath: this.reportPath, sql });
+    const res = await this._fetch(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: this.authHeader,
+          'Content-Type': 'text/xml; charset=utf-8',
+          SOAPAction: 'runReport',
+        },
+        body: envelope,
+      },
+      signal
+    );
+    const text = await res.text();
+    if (res.status === 401 || res.status === 403) throw new FusionError('Authentication failed (SOAP).', { status: res.status });
+    if (res.status === 404) throw new FusionError('Report not found (SOAP).', { status: 404 });
+    if (!res.ok || /<(?:\w+:)?Fault>/.test(text)) {
+      const fault = extractSoapFault(text);
+      if (/not found|no such|does not exist/i.test(fault)) throw new FusionError('Report not found (SOAP).', { status: 404, detail: fault });
+      throw new FusionError(`Query execution failed (SOAP): ${fault || 'HTTP ' + res.status}`, { status: res.status, detail: text.slice(0, 500) });
+    }
+    const m = text.match(/<(?:\w+:)?reportBytes>([\s\S]*?)<\/(?:\w+:)?reportBytes>/i);
+    if (!m) throw new FusionError('SOAP response contained no reportBytes.', { detail: text.slice(0, 400) });
+    return Buffer.from(m[1].trim(), 'base64').toString('utf8');
+  }
+
+  /**
    * Deploy the generic SQL Runner report to the pod's catalog using the BI
    * Publisher SOAP CatalogService uploadObject operation. Idempotent: an
    * existing object at the path is overwritten.
@@ -332,6 +399,38 @@ class FusionClient {
 
 function stripTrailingSemicolon(sql) {
   return String(sql || '').trim().replace(/;+\s*$/, '');
+}
+
+function looksLikeXml(text) {
+  const t = String(text || '').trimStart();
+  return t.startsWith('<?xml') || (t.startsWith('<') && /<\/?\w/.test(t.slice(0, 200)));
+}
+
+function soapRunReportEnvelope({ reportPath, sql }) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+               xmlns:pub="http://xmlns.oracle.com/oxp/service/PublicReportService">
+  <soap:Body>
+    <pub:runReport>
+      <pub:reportRequest>
+        <pub:attributeFormat>csv</pub:attributeFormat>
+        <pub:attributeLocale>en-US</pub:attributeLocale>
+        <pub:byPassCache>true</pub:byPassCache>
+        <pub:flattenXML>false</pub:flattenXML>
+        <pub:reportAbsolutePath>${escapeXml(reportPath)}</pub:reportAbsolutePath>
+        <pub:sizeOfDataChunkDownload>-1</pub:sizeOfDataChunkDownload>
+        <pub:parameterNameValues>
+          <pub:listOfParamNameValues>
+            <pub:item>
+              <pub:name>p_sql</pub:name>
+              <pub:values><pub:item>${escapeXml(sql)}</pub:item></pub:values>
+            </pub:item>
+          </pub:listOfParamNameValues>
+        </pub:parameterNameValues>
+      </pub:reportRequest>
+    </pub:runReport>
+  </soap:Body>
+</soap:Envelope>`;
 }
 
 async function safeText(res) {
@@ -420,7 +519,7 @@ module.exports = {
   FusionError,
   normalizePod,
   DEFAULT_REPORT_PATH,
-  _internals: { encodeReportPath, buildMultipart, extractSoapFault, stripTrailingSemicolon },
+  _internals: { encodeReportPath, buildMultipart, extractSoapFault, stripTrailingSemicolon, looksLikeXml, soapRunReportEnvelope },
 };
 
 // XMLParser is retained for callers that request XML output instead of CSV.
